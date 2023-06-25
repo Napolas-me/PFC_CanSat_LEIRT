@@ -5,7 +5,7 @@
 
 //add generic libraries
 
-#define TX_PIN
+#define TX_PIN 8
 #define SPEED 2000 //speed The desired bit rate in bits per second
 #define interval 1500 // 1.5 seg
 /*
@@ -13,6 +13,7 @@
  * driver(speed, rx, tx, en);
  */
 RH_ASK driver(SPEED, 0, TX_PIN, 0); 
+bfs::Mpu9250 imu(&SPI, 2);
 
 typedef struct {
    //AXIS vars
@@ -64,8 +65,10 @@ void setup() {
 	Serial.begin(115200);
 	while(!Serial) {}
 	/* Start the SPI bus */
+  //SPI.begin()
 	SPI.begin();
-	/* Initialize and configure IMU */
+  
+  	/* Initialize and configure IMU */
 	if (!imu.Begin()) {
 	Serial.println("Error initializing communication with IMU");
 	while(1) {}
@@ -77,29 +80,46 @@ void setup() {
 	}
   
 }
+char message[10];
 
 void loop() {
 	// put your main code here, to run repeatedly:
-  
-	axis.ac_x = imu.accel_x_mps2();
-	axis.ac_y = imu.accel_y_mps2();
-	axis.ac_z = imu.accel_z_mps2();
-	axis.gy_x = imu.gyro_x_radps();
-	axis.gy_y = imu.gyro_y_radps();
-	axis.gy_z = imu.gyro_z_radps();
-	axis.mag_x = imu.mag_x_ut();
-	axis.mag_y = imu.mag_y_ut();
-	axis.mag_z = imu.mag_z_ut();
-	
-	delay(1000);
-	
-	char message[256];
-	sprintf(message, "AC_X:%.2f, AC_Y:%.2f, AC_Z:%.2f, GY_X:%.2f, GY_Y:%.2f, GY_Z:%.2f, MAG_X:%.2f, MAG_Y:%.2f, MAG_Z:%.2f",axis.ac_x, axis.ac_y, axis.ac_z, axis.gy_x, axis.gy_y, axis.gy_z, axis.mag_x, axis.mag_y, axis.mag_z);
+  if (imu.Read()) {
+    axis.ac_x = imu.accel_x_mps2();
+    axis.ac_y = imu.accel_y_mps2();
+    axis.ac_z = imu.accel_z_mps2();
+    axis.gy_x = imu.gyro_x_radps();
+    axis.gy_y = imu.gyro_y_radps();
+    axis.gy_z = imu.gyro_z_radps();
+    axis.mag_x = imu.mag_x_ut();
+    axis.mag_y = imu.mag_y_ut();
+    axis.mag_z = imu.mag_z_ut();
+
     
-	//const char *msg = "hello world XD";
-    //driver.send((uint8_t *)msg, strlen(msg));
+    sprintf(message, "%f", axis.ac_x);
+  }
+   // Serial.println(axis.ac_x);
+    delay(1000);
 	
-    driver.send((uint8_t *)message, strlen(msg));
+	//sprintf(message, "AC_X:%f, AC_Y:%f, AC_Z:%f, GY_X:%f, GY_Y:%f, GY_Z:%f, MAG_X:%f, MAG_Y:%f, MAG_Z:%f",axis.ac_x, axis.ac_y, axis.ac_z, axis.gy_x, axis.gy_y, axis.gy_z, axis.mag_x, axis.mag_y, axis.mag_z);
+      
+	//const char *msg = "hello world XD";
+  //driver.send((uint8_t *)msg, strlen(msg));
+  for(int i = 0; i < strlen(message); i++){
+    Serial.println(message[i], HEX);
+  }
+    Serial.println("--------------");
+    //Serial.print("Size:");
+    //Serial.println(strlen(message));
+    driver.send((uint8_t *)message, strlen(message));
+    //char char_value;
+
+    // Copy float bytes to char using memcpy
+    // memcpy(&char_value, &(axis.ac_x), sizeof(float));
+    //Serial.print("char_value: ");
+    //Serial.println(char_value);
+
+    //driver.send(&char_value, strlen(char_value));
     driver.waitPacketSent();
     delay(1000);
 }
