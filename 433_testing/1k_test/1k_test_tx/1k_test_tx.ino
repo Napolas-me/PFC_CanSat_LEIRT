@@ -28,7 +28,7 @@ void setup() {
 }
 
 void loop() {
-  //const char *msg = "hello world XD";
+  const char *msg = "hello world XD";
   Serial.println("Start test");
 
   for(uint8_t i = 0x00; i <= 0xFF; i++){
