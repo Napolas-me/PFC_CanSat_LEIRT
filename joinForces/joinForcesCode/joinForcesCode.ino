@@ -1,5 +1,5 @@
-#include <RH_ASK.h>
-#include "mpu9250.h"
+#include <RH_ASK.h> //433
+#include "mpu9250.h" //axis
 
 #include <stdio.h>
 
@@ -8,6 +8,7 @@
 #define TX_PIN 8
 #define SPEED 2000 //speed The desired bit rate in bits per second
 #define interval 1500 // 1.5 seg
+#define MSG_SIZE 256
 /*
  * second and last param not needed. 
  * driver(speed, rx, tx, en);
@@ -26,6 +27,8 @@ typedef struct {
    float mag_x;
    float mag_y;
    float mag_z;
+   int lastRead;
+   int lastSent;
 } AxisDataStruct;
 
 typedef struct {
@@ -33,57 +36,100 @@ typedef struct {
    float pres;
    float temp;
    float alt;
+   int lastRead;
+   int lastSent;
 } BMPDataStruct;
 
 typedef struct {
    //GPS stuff
    char* gpsMessage;
+   int lastRead;
+   int lastSent;
 } GPSDataStruct;
 
-
 AxisDataStruct axis;
-//BMPDataStruct bmp;
-//GPSDataStruct gps;
+BMPDataStruct bmp;
+GPSDataStruct gps;
+
+char messageAxis[MSG_SIZE];
+char messageGps[MSG_SIZE];
+char messageBmp[MSG_SIZE];
+
+void errorMsg(char* msg){
+  Serial.print("ERROR: ");
+  Serial.println(msg);
+  while(1);
+}
+
+int appendFloat(char* msg, char sep, float value){
+  char* helperMsg 
+  dtostrf(value, 0, 6, helperMsg);
+
+  int helperSize = strlen(helperMsg);
+  int initialSize = strlen(msg);
+  for(int i = initialSize, int j = 0; i < MSG_SIZE && j <= helperSize; i++, j++){
+    if(i == initialSize){
+      msg + i = sep;
+      i++;
+    }
+    msg + i = helperMsg[j]; 
+
+    if(i+1 == MSG_SIZE) errorMsg("Not enough space in msg buffer");
+  }
+  //msg++ = sep;
+  msg++ = '\0'; // terminar string
+
+  return strlen(msg);
+}
 
 void setup() {
   
 	/*433 Init*/
 	
-	#ifdef RH_HAVE_SERIAL
-		Serial.begin(9600);	  // Debugging only
-	#endif
-		if (!driver.init())
-	#ifdef RH_HAVE_SERIAL
-			 Serial.println("init failed");
-	#else
-		;
-	#endif
+  Serial.begin(9600);
+
+  while(!Serial);
+  Serial.println("Serial inicialized!");
+
+  if(!driver.init()) errorMsg("Transmitter not initialized");
+
+  SPI.begin();
 	
 	/*Gy-9250 Init */
-	
-	/* Serial to display data */
-	Serial.begin(115200);
-	while(!Serial) {}
-	/* Start the SPI bus */
-  //SPI.begin()
-	SPI.begin();
-  
   	/* Initialize and configure IMU */
-	if (!imu.Begin()) {
-	Serial.println("Error initializing communication with IMU");
-	while(1) {}
-	}
+	if (!imu.Begin())	errorMsg("Error initializing communication with IMU");
+	
 	/* Set the sample rate divider */
-	if (!imu.ConfigSrd(19)) {
-	Serial.println("Error configured SRD");
-	while(1) {}
-	}
-  
-}
-char message[10];
+	if (!imu.ConfigSrd(19))	errorMsg("Error configured SRD");
 
-void loop() {
-	// put your main code here, to run repeatedly:
+  // populate needed vars
+  axis.lastRead = 0;
+  axis.lastSent = 0;
+
+  bmp.lastRead = 0;
+  bmp.lastSent = 0;
+
+  gps.lastRead = 0;
+  gps.lastSent = 0;
+
+  messageAxis[0] = 'A'; //start char indicates what message is receiving
+  messageBmp[0] = 'B';
+  messageGps[0] = 'G';
+}
+
+void resetAxisMsg(){
+  messageAxis[1] = '\0';
+}
+
+void resetBmpMsg(){
+  messageBmp[1] = '\0';
+}
+
+void resetGpsMsg(){
+  messageGps[1] = '\0';
+}
+
+void readAxis(){
   if (imu.Read()) {
     axis.ac_x = imu.accel_x_mps2();
     axis.ac_y = imu.accel_y_mps2();
@@ -95,31 +141,53 @@ void loop() {
     axis.mag_y = imu.mag_y_ut();
     axis.mag_z = imu.mag_z_ut();
 
-    
-    sprintf(message, "%f", axis.ac_x);
+    axis.lastRead++;
   }
-   // Serial.println(axis.ac_x);
-    delay(1000);
-	
-	//sprintf(message, "AC_X:%f, AC_Y:%f, AC_Z:%f, GY_X:%f, GY_Y:%f, GY_Z:%f, MAG_X:%f, MAG_Y:%f, MAG_Z:%f",axis.ac_x, axis.ac_y, axis.ac_z, axis.gy_x, axis.gy_y, axis.gy_z, axis.mag_x, axis.mag_y, axis.mag_z);
-      
-	//const char *msg = "hello world XD";
-  //driver.send((uint8_t *)msg, strlen(msg));
-  for(int i = 0; i < strlen(message); i++){
-    Serial.println(message[i], HEX);
+}
+
+void sendMsg(char* msg){
+  driver.send((uint8_t *)msg, strlen(msg));
+  driver.waitPacketSent();//deve tornar bloqueante, ver melhor
+}
+
+//maybe no need for this check in the following 3 funcs
+void sendAxis(){
+  //assemble msg here?! or somewhere else?
+  if(axis.lastRead > axis.lastSent){
+    sendMsg(messageAxis);
+    axis.lastSent++;
   }
-    Serial.println("--------------");
-    //Serial.print("Size:");
-    //Serial.println(strlen(message));
-    driver.send((uint8_t *)message, strlen(message));
-    //char char_value;
+}
 
-    // Copy float bytes to char using memcpy
-    // memcpy(&char_value, &(axis.ac_x), sizeof(float));
-    //Serial.print("char_value: ");
-    //Serial.println(char_value);
+void sendBmp(){
+  if(bmp.lastRead > bmp.lastSent){
+    sendMsg(messageBmp);
+    bmp.lastSent++;
+  }
+}
 
-    //driver.send(&char_value, strlen(char_value));
-    driver.waitPacketSent();
-    delay(1000);
+void sendGps(){
+  if(gps.lastRead > gps.lastSent){
+    sendMsg(messageGps);
+    gps.lastSent++;
+  }
+}
+
+unsigned long beforeRead;
+void loop() {
+  beforeRead = millis();
+
+  readAxis();
+  readBmp();
+  readGps();
+
+  Serial.print("Reading from sensors time : ");
+  Serial.println(millis() - beforeRead);
+
+  sendAxis();
+  sendBmp();
+  sendGps();
+
+  Serial.print("Loop time: ");
+  Serial.prinln(millis() - beforeRead);
 }
