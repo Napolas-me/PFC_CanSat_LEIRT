@@ -1,5 +1,12 @@
 #include <RH_ASK.h> //433
-#include "mpu9250.h" //axis
+#include <mpu9250.h> //axis
+
+#include <Adafruit_BMP3XX.h>
+#include <bmp3.h>
+#include <bmp3_defs.h>//bmp390
+
+#include <TinyGPS++.h>//gps
+#include <TinyGPSPlus.h>
 
 #include <stdio.h>
 
@@ -9,15 +16,22 @@
 #define SPEED 2000 //speed The desired bit rate in bits per second
 #define interval 1500 // 1.5 seg
 #define MSG_SIZE 256
+#define BMP_CS 10
+#define BMP_SCK 7
+#define BMP_MISO 9
+#define BMP_MOSI 8
+
+#define SEALEVELPRESSURE_HPA_PORTUGAL (1014)
 /*
  * second and last param not needed. 
  * driver(speed, rx, tx, en);
  */
 RH_ASK driver(SPEED, 0, TX_PIN, 0); 
 bfs::Mpu9250 imu(&SPI, 2);
+Adafruit_BMP3XX bmp390;
+TinyGPSPlus neo;
 
 typedef struct {
-   //AXIS vars
    float ac_x;
    float ac_y;
    float ac_z;
@@ -27,33 +41,32 @@ typedef struct {
    float mag_x;
    float mag_y;
    float mag_z;
-   int lastRead;
-   int lastSent;
+   //int lastRead;
+   //int lastSent;
 } AxisDataStruct;
 
 typedef struct {
-   //pressure, temperature  & altitude
    float pres;
    float temp;
    float alt;
-   int lastRead;
-   int lastSent;
+   //int lastRead;
+   //int lastSent;
 } BMPDataStruct;
 
 typedef struct {
-   //GPS stuff
-   char* gpsMessage;
-   int lastRead;
-   int lastSent;
+   double lat;
+   double lng;
+   //int lastRead;
+   //int lastSent;
 } GPSDataStruct;
 
 AxisDataStruct axis;
 BMPDataStruct bmp;
 GPSDataStruct gps;
 
-char messageAxis[MSG_SIZE];
-char messageGps[MSG_SIZE];
-char messageBmp[MSG_SIZE];
+char* messageAxis;
+char* messageGps;
+char* messageBmp;
 
 void errorMsg(char* msg){
   Serial.print("ERROR: ");
@@ -62,22 +75,24 @@ void errorMsg(char* msg){
 }
 
 int appendFloat(char* msg, char sep, float value){
-  char* helperMsg 
+  char* helperMsg;
   dtostrf(value, 0, 6, helperMsg);
 
   int helperSize = strlen(helperMsg);
   int initialSize = strlen(msg);
-  for(int i = initialSize, int j = 0; i < MSG_SIZE && j <= helperSize; i++, j++){
+
+  int i = initialSize, j = 0;
+  for(; i < MSG_SIZE && j <= helperSize; i++, j++){
     if(i == initialSize){
-      msg + i = sep;
+      msg[i] = sep;
       i++;
     }
-    msg + i = helperMsg[j]; 
+    msg[i] = helperMsg[j]; 
 
     if(i+1 == MSG_SIZE) errorMsg("Not enough space in msg buffer");
   }
   //msg++ = sep;
-  msg++ = '\0'; // terminar string
+  msg[i+1] = '\0'; // terminar string
 
   return strlen(msg);
 }
@@ -85,7 +100,10 @@ int appendFloat(char* msg, char sep, float value){
 void setup() {
   
 	/*433 Init*/
-	
+	messageAxis = malloc(MSG_SIZE);
+  messageBmp = malloc(MSG_SIZE);
+  messageGps = malloc(MSG_SIZE);
+
   Serial.begin(9600);
 
   while(!Serial);
@@ -102,7 +120,16 @@ void setup() {
 	/* Set the sample rate divider */
 	if (!imu.ConfigSrd(19))	errorMsg("Error configured SRD");
 
+  //startup bmp
+  if (!bmp390.begin_SPI(BMP_CS, BMP_SCK, BMP_MISO, BMP_MOSI)) errorMsg("Could not find a valid BMP3 sensor, check wiring!");
+
+  //bmp390.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
+  //bmp390.setPressureOversampling(BMP3_OVERSAMPLING_4X);
+  //bmp390.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
+  //bmp390.setOutputDataRate(BMP3_ODR_50_HZ);
+
   // populate needed vars
+  /*
   axis.lastRead = 0;
   axis.lastSent = 0;
 
@@ -111,6 +138,7 @@ void setup() {
 
   gps.lastRead = 0;
   gps.lastSent = 0;
+  */
 
   messageAxis[0] = 'A'; //start char indicates what message is receiving
   messageBmp[0] = 'B';
@@ -141,8 +169,39 @@ void readAxis(){
     axis.mag_y = imu.mag_y_ut();
     axis.mag_z = imu.mag_z_ut();
 
-    axis.lastRead++;
+    //axis.lastRead++;
   }
+
+  //Assemble msg
+  appendFloat(messageAxis, ',', axis.ac_x );
+  appendFloat(messageAxis, ',', axis.ac_y );
+  appendFloat(messageAxis, ',', axis.ac_z);
+  appendFloat(messageAxis, ',', axis.gy_x);
+  appendFloat(messageAxis, ',', axis.gy_y);
+  appendFloat(messageAxis, ',', axis.gy_z);
+  appendFloat(messageAxis, ',', axis.mag_x);
+  appendFloat(messageAxis, ',', axis.mag_y);
+  appendFloat(messageAxis, ',', axis.mag_z);
+}
+
+void readBmp(){
+  if (bmp390.performReading()){
+    bmp.temp = bmp390.temperature;
+    bmp.pres = bmp390.pressure / 100;
+    bmp.alt = bmp390.readAltitude(SEALEVELPRESSURE_HPA_PORTUGAL); 
+  }
+  appendFloat(messageBmp, ',', bmp.pres);
+  appendFloat(messageBmp, ',', bmp.temp);
+  appendFloat(messageBmp, ',', bmp.alt);
+}
+
+void readGps(){
+  if(neo.satellites.isValid()){
+    gps.lat = neo.location.lat();
+    gps.lng = neo.location.lng();
+  }
+  appendFloat(messageGps, ',', gps.lat);
+  appendFloat(messageGps, ',', gps.lng);
 }
 
 void sendMsg(char* msg){
@@ -151,26 +210,26 @@ void sendMsg(char* msg){
 }
 
 //maybe no need for this check in the following 3 funcs
+
 void sendAxis(){
-  //assemble msg here?! or somewhere else?
-  if(axis.lastRead > axis.lastSent){
+  //if(axis.lastRead > axis.lastSent){
     sendMsg(messageAxis);
-    axis.lastSent++;
-  }
+    //axis.lastSent++;
+  //}
 }
 
 void sendBmp(){
-  if(bmp.lastRead > bmp.lastSent){
+  //if(bmp.lastRead > bmp.lastSent){
     sendMsg(messageBmp);
-    bmp.lastSent++;
-  }
+    //bmp.lastSent++;
+  //}
 }
 
 void sendGps(){
-  if(gps.lastRead > gps.lastSent){
+  //if(gps.lastRead > gps.lastSent){
     sendMsg(messageGps);
-    gps.lastSent++;
-  }
+    //gps.lastSent++;
+  //}
 }
 
 unsigned long beforeRead;
@@ -189,5 +248,5 @@ void loop() {
   sendGps();
 
   Serial.print("Loop time: ");
-  Serial.prinln(millis() - beforeRead);
+  Serial.println(millis() - beforeRead);
 }
